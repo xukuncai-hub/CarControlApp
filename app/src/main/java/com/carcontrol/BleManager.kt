@@ -29,14 +29,16 @@ import java.util.UUID
 class BleManager(private val context: Context) {
 
     companion object {
+        // 标准 UUID (文档与 BLE 规范标准)
         val SERVICE_UUID: UUID = UUID.fromString("4fafc201-1fb5-459e-8fcc-c5c9c331914b")
         val CHARACTERISTIC_UUID: UUID = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26a8")
 
-        const val SCAN_TIMEOUT_MS = 10_000L
-        private const val SCAN_REPORT_DELAY_MS = 250L
-        private const val SCAN_UI_FLUSH_MS = 250L
-        private const val SCAN_FALLBACK_MS = 4_000L
-        private const val SCAN_STOP_AFTER_CAR_MS = 1_200L
+        // 历史固件兼容 UUID (固件曾因字节序倒序生成的实际空中 UUID)
+        val LEGACY_SERVICE_UUID: UUID = UUID.fromString("4b9131c3-c9c5-cc8f-459e-1fb54fafc201")
+        val LEGACY_CHARACTERISTIC_UUID: UUID = UUID.fromString("a8261b36-07ea-f5b7-4688-36e1beb5483e")
+
+        const val SCAN_TIMEOUT_MS = 12_000L
+        private const val SCAN_UI_FLUSH_MS = 200L
         private const val CONNECT_TIMEOUT_MS = 12_000L
         private const val WRITE_TIMEOUT_MS = 800L
         private const val MAX_QUEUE = 6
@@ -67,8 +69,6 @@ class BleManager(private val context: Context) {
     private val seenDevices = LinkedHashMap<String, BleDevice>()
     private val pendingDevices = HashMap<String, BleDevice>()
     private var flushScheduled = false
-    private var carFound = false
-    private var useCarFilter = true
 
     private val writeQueue = ArrayDeque<String>()
     private var writeInFlight = false
@@ -77,18 +77,6 @@ class BleManager(private val context: Context) {
         if (state == State.SCANNING) {
             finishScan()
             callback?.onLog("扫描结束")
-        }
-    }
-
-    private val scanFallback = Runnable {
-        if (state == State.SCANNING && useCarFilter && seenDevices.isEmpty() && pendingDevices.isEmpty()) {
-            restartScanWithoutFilter()
-        }
-    }
-
-    private val stopScanAfterCar = Runnable {
-        if (state == State.SCANNING && carFound) {
-            finishScan()
         }
     }
 
@@ -151,11 +139,10 @@ class BleManager(private val context: Context) {
         stopScanInternal()
         seenDevices.clear()
         pendingDevices.clear()
-        useCarFilter = true
-        carFound = false
 
         try {
-            scanner.startScan(carScanFilters(), buildScanSettings(batched = true), scanCallback)
+            // 使用通用扫描，避免特定厂商对 128 位 UUID ScanFilter 过滤失效导致漏检
+            scanner.startScan(null, buildScanSettings(), scanCallback)
         } catch (e: SecurityException) {
             callback?.onError("缺少蓝牙扫描权限")
             return false
@@ -163,7 +150,6 @@ class BleManager(private val context: Context) {
         setState(State.SCANNING)
         callback?.onLog("正在搜索附近的小车…")
         mainHandler.postDelayed(scanTimeout, SCAN_TIMEOUT_MS)
-        mainHandler.postDelayed(scanFallback, SCAN_FALLBACK_MS)
         return true
     }
 
@@ -172,42 +158,13 @@ class BleManager(private val context: Context) {
         finishScan()
     }
 
-    private fun buildScanSettings(batched: Boolean): ScanSettings = ScanSettings.Builder()
+    private fun buildScanSettings(): ScanSettings = ScanSettings.Builder()
         .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-        .setReportDelay(if (batched) SCAN_REPORT_DELAY_MS else 0)
+        .setReportDelay(0)
         .build()
-
-    private fun carScanFilters(): List<ScanFilter> = listOf(
-        ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_UUID)).build()
-    )
-
-    private fun restartScanWithoutFilter() {
-        val scanner = adapter?.bluetoothLeScanner ?: return
-        try {
-            scanner.stopScan(scanCallback)
-        } catch (_: SecurityException) {
-        }
-        mainHandler.removeCallbacks(scanFallback)
-        mainHandler.removeCallbacks(stopScanAfterCar)
-        mainHandler.removeCallbacks(flushRunnable)
-        pendingDevices.clear()
-        flushScheduled = false
-        carFound = false
-        useCarFilter = false
-
-        try {
-            scanner.startScan(null, buildScanSettings(batched = false), scanCallback)
-            callback?.onLog("未找到小车，正在搜索全部设备…")
-        } catch (e: SecurityException) {
-            callback?.onError("缺少蓝牙扫描权限")
-            finishScan()
-        }
-    }
 
     private fun stopScanInternal() {
         mainHandler.removeCallbacks(scanTimeout)
-        mainHandler.removeCallbacks(scanFallback)
-        mainHandler.removeCallbacks(stopScanAfterCar)
         mainHandler.removeCallbacks(flushRunnable)
         if (state == State.SCANNING) {
             try {
@@ -217,7 +174,6 @@ class BleManager(private val context: Context) {
         }
         pendingDevices.clear()
         flushScheduled = false
-        carFound = false
     }
 
     private fun finishScan() {
@@ -227,12 +183,22 @@ class BleManager(private val context: Context) {
         callback?.onScanFinished()
     }
 
+    private fun isCarDevice(name: String, result: ScanResult): Boolean {
+        val serviceUuids = result.scanRecord?.serviceUuids ?: emptyList()
+        val hasMatchingUuid = serviceUuids.any {
+            it.uuid == SERVICE_UUID || it.uuid == LEGACY_SERVICE_UUID
+        }
+        if (hasMatchingUuid) return true
+        if (name.contains("ESP32", ignoreCase = true)) return true
+        if (name.contains("car", ignoreCase = true)) return true
+        return false
+    }
+
     private fun handleScanResult(result: ScanResult) {
         if (state != State.SCANNING) return
         val device = result.device ?: return
         val name = resolveName(device, result)
-        val isCar = result.scanRecord?.serviceUuids?.contains(ParcelUuid(SERVICE_UUID)) == true ||
-            name.contains("ESP32", ignoreCase = true)
+        val isCar = isCarDevice(name, result)
         val found = BleDevice(name, device.address, result.rssi, isCar)
         val latest = pendingDevices[device.address] ?: seenDevices[device.address]
 
@@ -243,11 +209,6 @@ class BleManager(private val context: Context) {
         ) {
             pendingDevices[device.address] = found
             scheduleFlush()
-        }
-
-        if (isCar && !carFound) {
-            carFound = true
-            mainHandler.postDelayed(stopScanAfterCar, SCAN_STOP_AFTER_CAR_MS)
         }
     }
 
@@ -348,11 +309,19 @@ class BleManager(private val context: Context) {
                     newState == BluetoothProfile.STATE_CONNECTED &&
                         status == BluetoothGatt.GATT_SUCCESS -> {
                         callback?.onLog("已连接，正在发现服务…")
-                        try {
-                            gatt.discoverServices()
-                        } catch (_: SecurityException) {
-                            failConnection(gatt, "无法读取设备服务")
-                        }
+                        // 延迟 300ms 发现服务，避开蓝牙协议栈刚连接时的并发震荡
+                        mainHandler.postDelayed({
+                            if (gatt === bluetoothGatt && state == State.CONNECTING) {
+                                try {
+                                    val ok = gatt.discoverServices()
+                                    if (!ok) {
+                                        failConnection(gatt, "启动服务发现失败")
+                                    }
+                                } catch (_: SecurityException) {
+                                    failConnection(gatt, "缺少蓝牙连接权限")
+                                }
+                            }
+                        }, 300L)
                     }
 
                     newState == BluetoothProfile.STATE_DISCONNECTED -> {
@@ -384,12 +353,40 @@ class BleManager(private val context: Context) {
                     failConnection(gatt, "读取服务失败 (status=$status)")
                     return@post
                 }
-                val service = gatt.getService(SERVICE_UUID)
-                val characteristic = service?.getCharacteristic(CHARACTERISTIC_UUID)
+
+                // 1. 尝试标准服务与特征
+                var characteristic = gatt.getService(SERVICE_UUID)?.getCharacteristic(CHARACTERISTIC_UUID)
+
+                // 2. 尝试历史固件服务与特征 (固件小端宏倒序)
+                if (characteristic == null) {
+                    characteristic = gatt.getService(LEGACY_SERVICE_UUID)?.getCharacteristic(LEGACY_CHARACTERISTIC_UUID)
+                }
+
+                // 3. 通用可写特征兜底查找 (排除系统标准 GATT 服务 0x1800/0x1801)
+                if (characteristic == null) {
+                    for (service in gatt.services) {
+                        val sUuid = service.uuid.toString().lowercase()
+                        if (sUuid.startsWith("00001800") || sUuid.startsWith("00001801")) {
+                            continue
+                        }
+                        for (c in service.characteristics) {
+                            val props = c.properties
+                            val canWrite = (props and BluetoothGattCharacteristic.PROPERTY_WRITE != 0) ||
+                                (props and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0)
+                            if (canWrite) {
+                                characteristic = c
+                                break
+                            }
+                        }
+                        if (characteristic != null) break
+                    }
+                }
+
                 if (characteristic == null) {
                     failConnection(gatt, "这不是小车设备（未找到控制服务）")
                     return@post
                 }
+
                 mainHandler.removeCallbacks(connectTimeout)
                 writeCharacteristic = characteristic
                 if (hasPermissions()) {
@@ -480,16 +477,20 @@ class BleManager(private val context: Context) {
         val characteristic = writeCharacteristic ?: return
         val payload = command.toByteArray(Charsets.UTF_8)
 
+        val props = characteristic.properties
+        val canWriteWithResp = (props and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0
+        val writeType = if (canWriteWithResp) {
+            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+        } else {
+            BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        }
+
         val accepted = try {
             if (Build.VERSION.SDK_INT >= 33) {
-                gatt.writeCharacteristic(
-                    characteristic,
-                    payload,
-                    BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                ) == BluetoothStatusCodes.SUCCESS
+                gatt.writeCharacteristic(characteristic, payload, writeType) == BluetoothStatusCodes.SUCCESS
             } else {
                 @Suppress("DEPRECATION")
-                characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                characteristic.writeType = writeType
                 @Suppress("DEPRECATION")
                 characteristic.value = payload
                 @Suppress("DEPRECATION")
@@ -500,8 +501,13 @@ class BleManager(private val context: Context) {
         }
 
         if (accepted) {
-            writeInFlight = true
-            mainHandler.postDelayed(writeTimeout, WRITE_TIMEOUT_MS)
+            if (writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) {
+                // WRITE_NO_RESPONSE 不产生系统 onCharacteristicWrite 回调，间隔 20ms 发送下一条
+                mainHandler.postDelayed({ drainWrites() }, 20)
+            } else {
+                writeInFlight = true
+                mainHandler.postDelayed(writeTimeout, WRITE_TIMEOUT_MS)
+            }
         } else {
             callback?.onError("指令发送失败，请重试")
             mainHandler.postDelayed({ drainWrites() }, 120)
