@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="canvas">#0A101C</color>
+    <color name="canvas_end">#0E1A2B</color>
+    <color name="surface">#111B2B</color>
+    <color name="surface_low">#0D1624</color>
+    <color name="surface_high">#18263C</color>
+    <color name="surface_higher">#1E2E47</color>
+    <color name="stroke">#24344D</color>
+    <color name="stroke_soft">#1B293E</color>
+
+    <color name="primary">#2DD4BF</color>
+    <color name="primary_muted">#1F8F83</color>
+    <color name="primary_container">#123832</color>
+    <color name="on_primary">#04231F</color>
+    <color name="secondary">#7DD3FC</color>
+    <color name="on_secondary">#062330</color>
+
+    <color name="text_primary">#EAF2FC</color>
+    <color name="text_secondary">#92A6C1</color>
+    <color name="text_tertiary">#617692</color>
+
+    <color name="danger">#FF5F6D</color>
+    <color name="danger_container">#3A1820</color>
+    <color name="warning">#F5B84D</color>
+    <color name="success">#3BE39B</color>
+    <color name="idle_dot">#64748B</color>
+    <color name="white">#FFFFFF</color>
+
+    <color name="dpad_side">#1A2A42</color>
+    <color name="preset_bg_selected">#123832</color>
+</resources>

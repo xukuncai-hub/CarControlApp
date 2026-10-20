@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">小车遥控</string>
+    <string name="app_subtitle">ESP32-C3 · BLE</string>
+
+    <string name="status_disconnected">未连接</string>
+    <string name="status_scanning">扫描中</string>
+    <string name="status_connecting">连接中</string>
+    <string name="status_connected">已连接</string>
+
+    <string name="connect_title">设备连接</string>
+    <string name="connect_hint_disconnected">尚未连接小车</string>
+    <string name="connect_hint_connected">已连接 %1$s</string>
+    <string name="connect_hint_connecting">正在连接…</string>
+    <string name="btn_scan">扫描</string>
+    <string name="btn_scan_stop">停止</string>
+    <string name="btn_cancel">取消</string>
+    <string name="btn_disconnect">断开</string>
+    <string name="auto_reconnect">启动时自动重连</string>
+    <string name="last_device">上次连接：%1$s</string>
+    <string name="btn_reconnect">重连</string>
+    <string name="scanning_hint">正在搜索附近的小车…</string>
+    <string name="scan_empty">未发现设备，请确认小车已上电</string>
+    <string name="device_badge">小车</string>
+    <string name="rssi_format">%1$d dBm</string>
+
+    <string name="placeholder_title">连接后开始操控</string>
+    <string name="placeholder_body">点击扫描，或重连上次使用的小车</string>
+    <string name="btn_scan_now">扫描设备</string>
+
+    <string name="mode_title">驾驶模式</string>
+    <string name="mode_track">循迹</string>
+    <string name="mode_remote">遥控</string>
+    <string name="mode_hint_remote">遥控模式 · 使用方向键驾驶</string>
+    <string name="mode_hint_track">循迹模式 · 小车自动沿线行驶</string>
+    <string name="mode_hint_perform">表演中 · 按停止键回到遥控</string>
+
+    <string name="dir_title">方向控制</string>
+    <string name="dir_idle">待命</string>
+    <string name="dir_left">左转</string>
+    <string name="dir_forward">前进</string>
+    <string name="dir_right">右转</string>
+    <string name="dir_hint">长按方向键持续行驶，松开自动停止</string>
+    <string name="btn_stop">停止</string>
+
+    <string name="perf_title">特技动作</string>
+    <string name="perf_idle">待命</string>
+    <string name="perf_running">表演中</string>
+    <string name="perf_spin">旋转</string>
+    <string name="perf_dance">跳舞</string>
+    <string name="perf_zigzag">蛇形</string>
+    <string name="perf_figure8">八字</string>
+    <string name="perf_wave">波浪</string>
+    <string name="perf_beep">蜂鸣</string>
+
+    <string name="speed_title">速度</string>
+    <string name="speed_default">200</string>
+    <string name="speed_value">%1$d</string>
+    <string name="speed_slow">慢</string>
+    <string name="speed_standard">标准</string>
+    <string name="speed_fast">快</string>
+
+    <string name="log_title">运行日志</string>
+    <string name="log_clear">清空日志</string>
+    <string name="log_empty">暂无日志</string>
+
+    <string name="footer">ESP32-C3 · BLE · 协议 v1</string>
+
+    <string name="msg_permission_denied">缺少蓝牙权限，请在系统设置中授予</string>
+    <string name="msg_bluetooth_off">请先打开蓝牙</string>
+    <string name="msg_location_off">请开启定位服务（Android 11 及以下扫描蓝牙需要）</string>
+    <string name="msg_switch_remote">已切回遥控模式</string>
+    <string name="msg_mode_track">切换到循迹模式</string>
+    <string name="msg_mode_remote">切换到遥控模式</string>
+    <string name="msg_speed">速度 %1$d</string>
+    <string name="msg_connected_ready">连接成功，可以开始操控</string>
+    <string name="msg_beep_reserved">蜂鸣指令已发送（固件预留）</string>
+    <string name="msg_connecting_last">正在重连上次设备…</string>
+    <string name="msg_bluetooth_on">蓝牙已开启</string>
+    <string name="msg_bluetooth_off_event">蓝牙已关闭</string>
+    <string name="msg_scan_cancelled">已停止扫描</string>
+    <string name="msg_ready">就绪，等待连接小车</string>
+    <string name="msg_perf">特技：%1$s</string>
+    <string name="msg_no_bluetooth">此设备不支持蓝牙</string>
+</resources>

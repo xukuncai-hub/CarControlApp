@@ -1,0 +1,21 @@
+# Gradle
+.gradle/
+.kotlin/
+build/
+app/build/
+captures/
+
+# Local SDK path
+local.properties
+
+# Android Studio
+.idea/
+*.iml
+.navigation/
+
+# Build outputs
+*.apk
+*.aab
+
+# OS
+.DS_Store
