@@ -399,6 +399,14 @@ class BleManager(private val context: Context) {
                 val name = deviceName(gatt.device)
                 callback?.onConnected(name, gatt.device.address)
                 callback?.onLog("已连接 $name")
+                val isStandard = characteristic.uuid == CHARACTERISTIC_UUID
+                val isLegacy = characteristic.uuid == LEGACY_CHARACTERISTIC_UUID
+                val modeDesc = when {
+                    isStandard -> "标准协议"
+                    isLegacy -> "兼容协议"
+                    else -> "通用通道"
+                }
+                callback?.onLog("控制通道: $modeDesc (${characteristic.uuid.toString().substring(0, 8)}…)")
             }
         }
 
@@ -478,11 +486,13 @@ class BleManager(private val context: Context) {
         val payload = command.toByteArray(Charsets.UTF_8)
 
         val props = characteristic.properties
-        val canWriteWithResp = (props and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0
-        val writeType = if (canWriteWithResp) {
-            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-        } else {
+        val canWriteNoResp = (props and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0
+        // 关键：小车遥控必须优先使用 WRITE_TYPE_NO_RESPONSE（无应答快速写入通道）
+        // 遥控高频指令无需等待从机协议栈 ACK，零延迟且避免系统回调死锁
+        val writeType = if (canWriteNoResp) {
             BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        } else {
+            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
         }
 
         val accepted = try {
@@ -501,6 +511,23 @@ class BleManager(private val context: Context) {
         }
 
         if (accepted) {
+            val label = when (command) {
+                "0" -> "循迹模式"
+                "1" -> "遥控模式"
+                "2" -> "左转"
+                "3" -> "前进"
+                "4" -> "右转"
+                "5" -> "停止"
+                "6" -> "特技-旋转"
+                "7" -> "特技-跳舞"
+                "8" -> "特技-蛇形"
+                "9" -> "特技-八字"
+                "10" -> "特技-波浪"
+                "11" -> "蜂鸣"
+                else -> if (command.startsWith("s")) "设置速度 ${command.substring(1)}" else command
+            }
+            callback?.onLog("➡ 发送: $label ($command)")
+
             if (writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) {
                 // WRITE_NO_RESPONSE 不产生系统 onCharacteristicWrite 回调，间隔 20ms 发送下一条
                 mainHandler.postDelayed({ drainWrites() }, 20)

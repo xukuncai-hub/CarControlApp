@@ -72,6 +72,8 @@ class MainActivity : AppCompatActivity(), BleManager.Callback {
     private var pendingScan = false
     private var pendingConnectAddress: String? = null
     private var actionAfterBluetooth: (() -> Unit)? = null
+    private var lastActionDownTime = 0L
+    private var pendingStopRunnable: Runnable? = null
     private var lastErrorToastAt = 0L
     private var lastErrorMessage = ""
 
@@ -130,6 +132,8 @@ class MainActivity : AppCompatActivity(), BleManager.Callback {
     }
 
     override fun onDestroy() {
+        pendingStopRunnable?.let { mainHandler.removeCallbacks(it) }
+        pendingStopRunnable = null
         stopRepeatTimer()
         speedSendRunnable?.let { mainHandler.removeCallbacks(it) }
         speedSendRunnable = null
@@ -645,6 +649,10 @@ class MainActivity : AppCompatActivity(), BleManager.Callback {
                         view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                         return@setOnTouchListener true
                     }
+                    pendingStopRunnable?.let { mainHandler.removeCallbacks(it) }
+                    pendingStopRunnable = null
+                    lastActionDownTime = android.os.SystemClock.uptimeMillis()
+
                     view.parent?.requestDisallowInterceptTouchEvent(true)
                     view.isPressed = true
                     haptic(view)
@@ -656,7 +664,20 @@ class MainActivity : AppCompatActivity(), BleManager.Callback {
                     view.parent?.requestDisallowInterceptTouchEvent(false)
                     view.isPressed = false
                     stopRepeatTimer()
-                    if (connected) stopSequence()
+                    if (connected) {
+                        val duration = android.os.SystemClock.uptimeMillis() - lastActionDownTime
+                        val minDriveTime = 220L // 点按最小动作保持 220ms，避免点按瞬间被停止冲掉
+                        if (duration < minDriveTime) {
+                            val delay = minDriveTime - duration
+                            val runnable = Runnable {
+                                if (connected) stopSequence()
+                            }
+                            pendingStopRunnable = runnable
+                            mainHandler.postDelayed(runnable, delay)
+                        } else {
+                            stopSequence()
+                        }
+                    }
                     true
                 }
 
