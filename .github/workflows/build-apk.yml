@@ -23,11 +23,10 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install SDK packages
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       - name: Build debug APK
         run: |
@@ -57,4 +56,4 @@ jobs:
             - BLE 扫描、连接、遥控、特技动作与调速
             - 自动重连、运行日志、速度预设
 
-            安装：下载 `CarControl-v2.0.apk`。该安装包使用 debug 签名，若手机已安装旧版需先卸载。
+            安装：下载 Release 附件中的 `CarControl-*.apk`。该安装包使用 debug 签名，若手机已安装旧版需先卸载。
