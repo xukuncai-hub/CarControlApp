@@ -23,10 +23,30 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Configure Android SDK
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          if [ -z "$SDK" ] || [ ! -d "$SDK" ]; then
+            for d in /usr/local/lib/android/sdk "$HOME/Android/Sdk"; do
+              if [ -d "$d" ]; then SDK="$d"; break; fi
+            done
+          fi
+          if [ -z "$SDK" ] || [ ! -d "$SDK" ]; then
+            echo "Android SDK not found"; exit 1
+          fi
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          SM="$(find "$SDK" -maxdepth 5 -name sdkmanager -type f 2>/dev/null | head -n 1)"
+          if [ -z "$SM" ]; then
+            echo "sdkmanager not found"; exit 1
+          fi
+          echo "SDKMANAGER=$SM" >> "$GITHUB_ENV"
+          "$SM" --version
+
       - name: Install Android SDK packages
         run: |
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Build debug APK
         run: |
