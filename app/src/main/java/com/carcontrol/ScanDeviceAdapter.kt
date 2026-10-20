@@ -1,30 +1,43 @@
 package com.carcontrol
 
-import android.annotation.SuppressLint
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.carcontrol.databinding.ItemScanDeviceBinding
 
 class ScanDeviceAdapter(
     private val onClick: (BleDevice) -> Unit
-) : RecyclerView.Adapter<ScanDeviceAdapter.Holder>() {
+) : ListAdapter<BleDevice, ScanDeviceAdapter.Holder>(DIFF) {
 
-    private val items = mutableListOf<BleDevice>()
+    companion object {
+        private val DIFF = object : DiffUtil.ItemCallback<BleDevice>() {
+            override fun areItemsTheSame(oldItem: BleDevice, newItem: BleDevice): Boolean =
+                oldItem.address == newItem.address
+
+            override fun areContentsTheSame(oldItem: BleDevice, newItem: BleDevice): Boolean =
+                oldItem == newItem
+        }
+    }
 
     class Holder(val binding: ItemScanDeviceBinding) : RecyclerView.ViewHolder(binding.root)
+
+    init {
+        setHasStableIds(true)
+    }
+
+    override fun getItemId(position: Int): Long = getItem(position).address.hashCode().toLong()
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
         val binding = ItemScanDeviceBinding.inflate(LayoutInflater.from(parent.context), parent, false)
         return Holder(binding)
     }
 
-    override fun getItemCount(): Int = items.size
-
     override fun onBindViewHolder(holder: Holder, position: Int) {
-        val device = items[position]
+        val device = getItem(position)
         val context = holder.binding.root.context
         holder.binding.tvName.text = device.name
         holder.binding.tvCarBadge.isVisible = device.isCar
@@ -44,25 +57,4 @@ class ScanDeviceAdapter(
         holder.binding.root.contentDescription =
             "${device.name}，${device.address}，信号强度 ${device.rssi} dBm"
     }
-
-    @SuppressLint("NotifyDataSetChanged")
-    fun upsert(device: BleDevice) {
-        val index = items.indexOfFirst { it.address == device.address }
-        if (index >= 0) {
-            items[index] = device
-        } else {
-            items.add(device)
-        }
-        items.sortWith(compareByDescending<BleDevice> { it.isCar }.thenByDescending { it.rssi })
-        notifyDataSetChanged()
-    }
-
-    @SuppressLint("NotifyDataSetChanged")
-    fun clear() {
-        if (items.isEmpty()) return
-        items.clear()
-        notifyDataSetChanged()
-    }
-
-    fun isEmpty(): Boolean = items.isEmpty()
 }

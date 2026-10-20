@@ -10,6 +10,7 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
@@ -32,6 +33,10 @@ class BleManager(private val context: Context) {
         val CHARACTERISTIC_UUID: UUID = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26a8")
 
         const val SCAN_TIMEOUT_MS = 10_000L
+        private const val SCAN_REPORT_DELAY_MS = 250L
+        private const val SCAN_UI_FLUSH_MS = 250L
+        private const val SCAN_FALLBACK_MS = 4_000L
+        private const val SCAN_STOP_AFTER_CAR_MS = 1_200L
         private const val CONNECT_TIMEOUT_MS = 12_000L
         private const val WRITE_TIMEOUT_MS = 800L
         private const val MAX_QUEUE = 6
@@ -41,7 +46,7 @@ class BleManager(private val context: Context) {
 
     interface Callback {
         fun onStateChanged(state: State)
-        fun onScanResult(device: BleDevice)
+        fun onScanResultsUpdated(devices: List<BleDevice>)
         fun onScanFinished()
         fun onConnected(name: String, address: String)
         fun onDisconnected()
@@ -60,16 +65,37 @@ class BleManager(private val context: Context) {
     private var bluetoothGatt: BluetoothGatt? = null
     private var writeCharacteristic: BluetoothGattCharacteristic? = null
     private val seenDevices = LinkedHashMap<String, BleDevice>()
+    private val pendingDevices = HashMap<String, BleDevice>()
+    private var flushScheduled = false
+    private var carFound = false
+    private var useCarFilter = true
 
     private val writeQueue = ArrayDeque<String>()
     private var writeInFlight = false
 
     private val scanTimeout = Runnable {
         if (state == State.SCANNING) {
-            stopScanInternal()
-            setState(State.IDLE)
-            callback?.onScanFinished()
+            finishScan()
             callback?.onLog("扫描结束")
+        }
+    }
+
+    private val scanFallback = Runnable {
+        if (state == State.SCANNING && useCarFilter && seenDevices.isEmpty() && pendingDevices.isEmpty()) {
+            restartScanWithoutFilter()
+        }
+    }
+
+    private val stopScanAfterCar = Runnable {
+        if (state == State.SCANNING && carFound) {
+            finishScan()
+        }
+    }
+
+    private val flushRunnable = Runnable {
+        flushScheduled = false
+        if (state == State.SCANNING) {
+            emitPendingDevices()
         }
     }
 
@@ -124,12 +150,12 @@ class BleManager(private val context: Context) {
 
         stopScanInternal()
         seenDevices.clear()
-        val settings = ScanSettings.Builder()
-            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-            .setReportDelay(0)
-            .build()
+        pendingDevices.clear()
+        useCarFilter = true
+        carFound = false
+
         try {
-            scanner.startScan(null, settings, scanCallback)
+            scanner.startScan(carScanFilters(), buildScanSettings(batched = true), scanCallback)
         } catch (e: SecurityException) {
             callback?.onError("缺少蓝牙扫描权限")
             return false
@@ -137,51 +163,123 @@ class BleManager(private val context: Context) {
         setState(State.SCANNING)
         callback?.onLog("正在搜索附近的小车…")
         mainHandler.postDelayed(scanTimeout, SCAN_TIMEOUT_MS)
+        mainHandler.postDelayed(scanFallback, SCAN_FALLBACK_MS)
         return true
     }
 
     fun stopScan() {
         if (state != State.SCANNING) return
-        stopScanInternal()
-        setState(State.IDLE)
-        callback?.onScanFinished()
+        finishScan()
+    }
+
+    private fun buildScanSettings(batched: Boolean): ScanSettings = ScanSettings.Builder()
+        .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+        .setReportDelay(if (batched) SCAN_REPORT_DELAY_MS else 0)
+        .build()
+
+    private fun carScanFilters(): List<ScanFilter> = listOf(
+        ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_UUID)).build()
+    )
+
+    private fun restartScanWithoutFilter() {
+        val scanner = adapter?.bluetoothLeScanner ?: return
+        try {
+            scanner.stopScan(scanCallback)
+        } catch (_: SecurityException) {
+        }
+        mainHandler.removeCallbacks(scanFallback)
+        mainHandler.removeCallbacks(stopScanAfterCar)
+        mainHandler.removeCallbacks(flushRunnable)
+        pendingDevices.clear()
+        flushScheduled = false
+        carFound = false
+        useCarFilter = false
+
+        try {
+            scanner.startScan(null, buildScanSettings(batched = false), scanCallback)
+            callback?.onLog("未找到小车，正在搜索全部设备…")
+        } catch (e: SecurityException) {
+            callback?.onError("缺少蓝牙扫描权限")
+            finishScan()
+        }
     }
 
     private fun stopScanInternal() {
         mainHandler.removeCallbacks(scanTimeout)
+        mainHandler.removeCallbacks(scanFallback)
+        mainHandler.removeCallbacks(stopScanAfterCar)
+        mainHandler.removeCallbacks(flushRunnable)
         if (state == State.SCANNING) {
             try {
                 adapter?.bluetoothLeScanner?.stopScan(scanCallback)
             } catch (_: SecurityException) {
             }
         }
+        pendingDevices.clear()
+        flushScheduled = false
+        carFound = false
+    }
+
+    private fun finishScan() {
+        emitPendingDevices()
+        stopScanInternal()
+        setState(State.IDLE)
+        callback?.onScanFinished()
+    }
+
+    private fun handleScanResult(result: ScanResult) {
+        if (state != State.SCANNING) return
+        val device = result.device ?: return
+        val name = resolveName(device, result)
+        val isCar = result.scanRecord?.serviceUuids?.contains(ParcelUuid(SERVICE_UUID)) == true ||
+            name.contains("ESP32", ignoreCase = true)
+        val found = BleDevice(name, device.address, result.rssi, isCar)
+        val latest = pendingDevices[device.address] ?: seenDevices[device.address]
+
+        if (latest == null ||
+            latest.name != found.name ||
+            latest.isCar != found.isCar ||
+            kotlin.math.abs(latest.rssi - found.rssi) >= 3
+        ) {
+            pendingDevices[device.address] = found
+            scheduleFlush()
+        }
+
+        if (isCar && !carFound) {
+            carFound = true
+            mainHandler.postDelayed(stopScanAfterCar, SCAN_STOP_AFTER_CAR_MS)
+        }
+    }
+
+    private fun scheduleFlush() {
+        if (flushScheduled) return
+        flushScheduled = true
+        mainHandler.postDelayed(flushRunnable, SCAN_UI_FLUSH_MS)
+    }
+
+    private fun emitPendingDevices() {
+        if (pendingDevices.isEmpty()) return
+        seenDevices.putAll(pendingDevices)
+        pendingDevices.clear()
+        flushScheduled = false
+        val devices = seenDevices.values
+            .sortedWith(compareByDescending<BleDevice> { it.isCar }.thenByDescending { it.rssi })
+            .take(30)
+        callback?.onScanResultsUpdated(devices)
     }
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
-            if (state != State.SCANNING) return
-            val device = result.device ?: return
-            val name = resolveName(device, result)
-            val isCar = result.scanRecord?.serviceUuids?.contains(ParcelUuid(SERVICE_UUID)) == true ||
-                name.contains("ESP32", ignoreCase = true)
-            val found = BleDevice(name, device.address, result.rssi, isCar)
-            val previous = seenDevices[device.address]
-            seenDevices[device.address] = found
-            if (previous == null ||
-                previous.name != found.name ||
-                previous.isCar != found.isCar ||
-                kotlin.math.abs(previous.rssi - found.rssi) >= 4
-            ) {
-                mainHandler.post {
-                    if (state == State.SCANNING) callback?.onScanResult(found)
-                }
-            }
+            handleScanResult(result)
+        }
+
+        override fun onBatchScanResults(results: MutableList<ScanResult>) {
+            results.forEach(::handleScanResult)
         }
 
         override fun onScanFailed(errorCode: Int) {
             mainHandler.post {
-                stopScanInternal()
-                setState(State.IDLE)
+                finishScan()
                 val msg = when (errorCode) {
                     ScanCallback.SCAN_FAILED_ALREADY_STARTED -> "扫描已在进行中"
                     ScanCallback.SCAN_FAILED_APPLICATION_REGISTRATION_FAILED -> "扫描初始化失败"
@@ -189,7 +287,6 @@ class BleManager(private val context: Context) {
                     else -> "扫描失败 ($errorCode)"
                 }
                 callback?.onError(msg)
-                callback?.onScanFinished()
             }
         }
     }

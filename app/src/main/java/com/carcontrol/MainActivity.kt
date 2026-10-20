@@ -167,6 +167,7 @@ class MainActivity : AppCompatActivity(), BleManager.Callback {
     private fun setupDeviceList() {
         deviceAdapter = ScanDeviceAdapter { device -> connectTo(device.address) }
         binding.rvDevices.layoutManager = LinearLayoutManager(this)
+        binding.rvDevices.itemAnimator = null
         binding.rvDevices.adapter = deviceAdapter
     }
 
@@ -313,7 +314,7 @@ class MainActivity : AppCompatActivity(), BleManager.Callback {
             requestBluetoothPermissions()
             return
         }
-        deviceAdapter.clear()
+        deviceAdapter.submitList(emptyList())
         binding.rvDevices.isVisible = false
         binding.tvScanEmpty.isVisible = false
         bleManager.startScan()
@@ -442,10 +443,12 @@ class MainActivity : AppCompatActivity(), BleManager.Callback {
         }
     }
 
-    override fun onScanResult(device: BleDevice) {
-        deviceAdapter.upsert(device)
-        binding.rvDevices.isVisible = true
-        binding.tvScanEmpty.isVisible = false
+    override fun onScanResultsUpdated(devices: List<BleDevice>) {
+        deviceAdapter.submitList(devices)
+        if (devices.isNotEmpty() && !connected) {
+            binding.rvDevices.isVisible = true
+            binding.tvScanEmpty.isVisible = false
+        }
     }
 
     override fun onScanFinished() {
@@ -454,8 +457,8 @@ class MainActivity : AppCompatActivity(), BleManager.Callback {
         binding.btnScan.isEnabled = !connected
         binding.scanProgressRow.isVisible = false
         binding.btnScanNow.isEnabled = true
-        binding.tvScanEmpty.isVisible = deviceAdapter.isEmpty() && !connected
-        binding.rvDevices.isVisible = !deviceAdapter.isEmpty()
+        binding.tvScanEmpty.isVisible = deviceAdapter.itemCount == 0 && !connected
+        binding.rvDevices.isVisible = deviceAdapter.itemCount > 0
         if (!connected) {
             binding.placeholderPanel.isVisible = true
             updateStatus(R.string.status_disconnected, R.color.idle_dot)
